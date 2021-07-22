@@ -21,6 +21,7 @@ EXTERN debugBootMenuTextlistPath:QWORD
 EXTERN debugBootMenuStepVtable:QWORD
 EXTERN EzTextlistSelectorVtable:QWORD
 EXTERN MoveMapListStepVtable:QWORD
+EXTERN getGamePropertiesValueGameIsTitleMode:QWORD
 
 .data
 	gotAnymoreOfThemMemory QWORD 141769A30h
@@ -411,12 +412,42 @@ initDebugBootMenuStepFunctions PROC
 initDebugBootMenuStepFunctions ENDP
 
 .data
-
+	endOfFunc QWORD 140ED145Dh
+	
 .code
 
 tInitDebugBootMenuStep PROC
+	lea rax, getGamePropertiesValueGameIsTitleMode
+	call rax
+	test al, al
+	je launchdebugboot
+	mov r8, 144786988h
+	mov r8, [r8]
+	mov edx, 8
+	mov ecx, 0E8h
+	mov rax, 141769A30h
+	call rax
+	test rax, rax
+	je goback
+	mov edx, 1
+	mov rcx, rax
+	mov rax, 14095DAD0h
+	call rax
+	jmp goback
+launchdebugboot:
+	mov r8, 144786988h
+	mov r8, [r8]
+	mov edx, 8
+	mov ecx, 230h
+	mov rax, 141769A30h
+	call rax
+	test rax, rax
+	je goback
+	mov rcx, rax
 	call initDebugBootMenuStep
-	jmp [bInitDebugBootMenuStep]
+	;jmp [bInitDebugBootMenuStep]
+goback:
+	jmp endOfFunc
 tInitDebugBootMenuStep ENDP
 
 .data

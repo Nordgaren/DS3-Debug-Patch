@@ -1,3 +1,4 @@
+EXTERN bMoveMapSaveFix:QWORD
 EXTERN bLoadDbgFont:QWORD
 EXTERN bIncWindowCounter:QWORD
 EXTERN bDecWindowCounter:QWORD
@@ -5,9 +6,50 @@ EXTERN TalkFontTpfPath:QWORD
 EXTERN TalkFontCcmPath:QWORD
 EXTERN DSFontTpfPath:QWORD
 EXTERN DSFontCcmPath:QWORD
+EXTERN sub_142F6ADF0:QWORD
+EXTERN bCheckSaveDisabled:QWORD
+EXTERN bDisableSave:QWORD
+EXTERN bEnableSave:QWORD
+
+.data
+
+.code
+
+tMoveMapSaveFix PROC
+	mov dword ptr [r9+0AECh], 1
+	mov byte ptr [r9+0AE1h], 0
+	jmp [bMoveMapSaveFix]
+tMoveMapSaveFix ENDP
+
+.data
+	saveDisabled BYTE 0
+	afterProfileIdxCheck QWORD 140626F4Ah
+.code
+
+CheckSaveDisabled PROC
+	cmp byte ptr [saveDisabled], 1
+	jne enabled
+	jmp [afterProfileIdxCheck]
+enabled:
+	mov eax, [r9+0A60h]
+	jmp [bCheckSaveDisabled]
+CheckSaveDisabled ENDP
+
+DisableSave PROC
+	mov qword ptr [rdi+0C8h], 0
+	mov [saveDisabled], bl
+	jmp [bDisableSave]
+DisableSave ENDP
+
+EnableSave PROC
+	mov [rsp+48h], rax
+	mov byte ptr [saveDisabled], 0
+	jmp [bEnableSave]
+EnableSave ENDP
 
 .data
 	pFD4FontManager QWORD 14494EE58h
+	fontNameString WORD 0FF2Dh, 0FF33h, 20h, 30B4h, 30B7h, 30C3h, 30AFh, 0 
 .code
 
 tLoadDbgFont PROC
@@ -29,12 +71,19 @@ tLoadDbgFont PROC
 	mov rcx, [rcx]
 	mov edx, 2
 	call fLoadDbgFont
-	mov r9, 14299EC68h
-	mov r8, 14299EC98h
+	mov r9d, 0Ch
+	lea r8, fontNameString
+	lea edx, [r9-9]
 	mov rcx, [pFD4FontManager]
 	mov rcx, [rcx]
-	mov edx, 3
-	call fLoadDbgFont
+	lea rax, sub_142F6ADF0
+	call rax
+	;mov r9, 14299EC68h
+	;mov r8, 14299EC98h
+	;mov rcx, [pFD4FontManager]
+	;mov rcx, [rcx]
+	;mov edx, 3
+	;call fLoadDbgFont
 	mov rax, [r15+140h]
 	jmp [bLoadDbgFont]
 tLoadDbgFont ENDP
@@ -203,7 +252,8 @@ loc_142F6AD9E:
 	lea rdx, [rsp+48h]
 	mov rcx, rsi
 	;call sub_142F6BAD0
-	mov rax, 140129960h
+	;mov rax, 140129960h
+	mov rax, 14229CCE0h
 	call rax
 	mov al, 1
 	jmp ending

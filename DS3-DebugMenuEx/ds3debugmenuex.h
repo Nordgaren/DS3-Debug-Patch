@@ -6,6 +6,7 @@
 #include <TlHelp32.h>
 #include <cstdint>
 #include <stdio.h>
+#include <wingdi.h>
 
 #include "dinput8/dinputWrapper.h"
 #include "MinHook/include/MinHook.h"
@@ -14,6 +15,11 @@ BYTE mov1ToAlBytes[5] = { 0xB0, 0x01, 0x90, 0x90, 0x90 };
 BYTE nopBytes[7] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
 BYTE xorRaxBytes[5] = { 0x48, 0x31, 0xC0, 0x90, 0x90 };
 BYTE jmpBytes[2] = { 0xEB, 0x71 };
+BYTE dBypassCheck1[4] = { 0xA3, 0xEE, 0x30, 0x00 };
+BYTE dBypassCheck2[4] = { 0x31, 0x8E, 0xE4, 0xFF };
+BYTE systemPropertiesValue[1] = { 0x03 };
+
+extern "C" wchar_t IsTitleModeString[] = L"Game.IsTitleMode";
 
 extern "C" wchar_t DSFontTpfPath[] = L"font:/DSFont24.tpf";
 extern "C" wchar_t DSFontCcmPath[] = L"font:/DSFont24.ccm";
@@ -46,6 +52,7 @@ extern "C" DWORD64 bLoadDbgFont;
 
 extern "C" VOID fDbgDispLoading();
 
+extern "C" DWORD64 bClearRenderTargetViewGrey;
 extern "C" DWORD64 bInitDebugBootMenuStep;
 extern "C" DWORD64 bInitMoveMapListStep;
 extern "C" DWORD64 bGameStepSelection;
@@ -53,6 +60,11 @@ extern "C" DWORD64 bCheckDebugDashSwitch;
 extern "C" DWORD64 bLoadGameProperties;
 extern "C" DWORD64 bDecWindowCounter;
 extern "C" DWORD64 bIncWindowCounter;
+extern "C" DWORD64 bMoveMapSaveFix;
+extern "C" DWORD64 bCheckSaveDisabled;
+extern "C" DWORD64 bDisableSave;
+extern "C" DWORD64 bEnableSave;
+extern "C" VOID ClearRenderTargetViewGrey();
 extern "C" VOID tInitDebugBootMenuStep();
 extern "C" VOID tInitMoveMapListStep();
 extern "C" VOID tGameStepSelection();
@@ -63,6 +75,10 @@ extern "C" VOID sub_140CF3520();
 extern "C" VOID patchMoveMapFinishAntiTamper();
 extern "C" VOID decWindowCounter();
 extern "C" VOID incWindowCounter();
+extern "C" VOID tMoveMapSaveFix();
+extern "C" VOID CheckSaveDisabled();
+extern "C" VOID DisableSave();
+extern "C" VOID EnableSave();
 
 extern "C" VOID debugBootMenuStepDtor();
 extern "C" VOID EzTextlistSelectorDtor();
@@ -72,4 +88,24 @@ extern "C" DWORD64* debugBootMenuStepVtable;
 extern "C" DWORD64* EzTextlistSelectorVtable;
 extern "C" DWORD64* MoveMapListStepVtable;
 
+extern "C" DWORD64 fCreateCompatibleDC;
+extern "C" DWORD64 fDeleteDC;
+
 LONG WINAPI UHFilter(struct _EXCEPTION_POINTERS* apExceptionInfo);
+
+typedef enum {
+	INVALID,
+	HOOK,
+	COPY
+} PATCHJOB_TYPE;
+
+typedef struct {
+	PATCHJOB_TYPE type;
+	BYTE* address;
+	BYTE* bytes;
+	int numBytes;
+	void* pFunction;
+	DWORD64* pReturn;
+	BYTE lastByteCheck;
+	int reapplyCount;
+} PatchJob;

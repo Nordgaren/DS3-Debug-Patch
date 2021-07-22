@@ -1,5 +1,12 @@
 #include "ds3debugmenuex.h"
 
+#include <thread>
+#include <vector>
+#include <string>
+#include <mutex>
+
+using namespace std;
+
 //141A645E0 -- gets demolished
 //145CFBB5D
 //145721DD5
@@ -7,6 +14,20 @@
 //1454DAA14 -- CHECK (not important?)
 //third one even lol (CRASH)
 
+//145E42FA8 - interesting
+#define NUM_PATCH_THREADS 10
+
+//vector<vector<PatchJob>> patchJobs;
+vector<PatchJob> patchJobs;
+bool threadStartupMarkers[NUM_PATCH_THREADS] = { false };
+bool threadFinishMarkers[NUM_PATCH_THREADS] = { false };
+int threadShitMarkers[NUM_PATCH_THREADS] = { 0 };
+int threadIndices[NUM_PATCH_THREADS];
+//mutex pjMutex;
+HANDLE pjMutex;
+HANDLE patchingThreads[NUM_PATCH_THREADS];
+
+DWORD64 bClearRenderTargetViewGrey = 0;
 DWORD64 bLoadDbgFont = 0;
 DWORD64 bInitDebugBootMenuStep = 0;
 DWORD64 bInitMoveMapListStep = 0;
@@ -15,6 +36,10 @@ DWORD64 bCheckDebugDashSwitch = 0;
 DWORD64 bLoadGameProperties = 0;
 DWORD64 bDecWindowCounter = 0;
 DWORD64 bIncWindowCounter = 0;
+DWORD64 bMoveMapSaveFix = 0;
+DWORD64 bCheckSaveDisabled = 0;
+DWORD64 bDisableSave = 0;
+DWORD64 bEnableSave = 0;
 
 BYTE pGestureBytes[1] = { 0x75 };
 
@@ -24,10 +49,18 @@ BYTE dbgFontPatch[2] = { 0xEB, 0x10 };
 BYTE moveMapListStepPatch[18] = { 0xC7, 0x46, 0x10, 0xFF, 0xFF, 0xFF, 0xFF, 0x48, 0x8B, 0x74, 0x24, 0x38, 0x48, 0x83, 0xC4, 0x20, 0x5F, 0xC3};
 BYTE sfxGUIPatch1[16] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
 BYTE sfxGUIPatch2[8] = { 0x48, 0x8B, 0x8A, 0x40, 0x03, 0x00, 0x00, 0x90 };
+BYTE checkProfileIdxPatch[5] = { 0x90, 0x90, 0x83, 0xF8, 0x09 };
 
 DWORD64* EzTextlistSelectorVtable = new DWORD64[23];
 DWORD64* MoveMapListStepVtable = new DWORD64[5];
 DWORD64* debugBootMenuStepVtable = new DWORD64[16];
+
+DWORD64 whatever;
+
+DWORD64 fDeleteDC = (DWORD64)DeleteDC;
+DWORD64 fCreateCompatibleDC = (DWORD64)CreateCompatibleDC;
+uint64_t DbgDispLoadingAddress = (uint64_t)&fDbgDispLoading;
+uint64_t pinitDebugBootMenuStepFunctions = (uint64_t)&initDebugBootMenuStepFunctions;
 
 tDirectInput8Create oDirectInput8Create;
 
@@ -129,6 +162,9 @@ void ExtraDelayedPatches()
     MemcpyProtected(0x14080A2E0, 2, mov1ToAlBytes); //-- Enable Event
     MemcpyProtected(0x140E82DEE, 5, xorRaxBytes); //-- (HeatMap Menu) Crash on load so it's disabled
 
+    MemcpyProtected(0x14062C3AE, 5, pFreeCamBytes1);
+    MemcpyProtected(0x14062C401, 31, pFreeCamBytes2);
+
     //Enable ChrDbgDraw
     MemcpyProtected(0x1408D8049, 5, mov1ToAlBytes);
 
@@ -151,7 +187,7 @@ void ExtraDelayedPatches()
 
     //Pav patch for sfx GUI menus
     MemcpyProtected(0x140250A5F, 16, sfxGUIPatch1);
-    MemcpyProtected(0x140DF3F56, 8, sfxGUIPatch2);
+    //MemcpyProtected(0x140DF3F56, 8, sfxGUIPatch2);
 
     SetUnhandledExceptionFilter(UHFilter);
 }
@@ -159,9 +195,10 @@ void ExtraDelayedPatches()
 void DelayedPatches()
 {
     //Boot Menu
-    int size = 0x230;
-    WriteProtected(0x140ED13F1, size);
-    Hook((LPVOID)0x140ED1457, 5, &tInitDebugBootMenuStep, &bInitDebugBootMenuStep);
+    //int size = 0x230;
+    //WriteProtected(0x140ED13F1, size);
+    //Hook((LPVOID)0x140ED1457, 5, &tInitDebugBootMenuStep, &bInitDebugBootMenuStep);
+    Hook((LPVOID)0x140ED1440, 5, &tInitDebugBootMenuStep, &bInitDebugBootMenuStep);
     //size = 0x155;
     //WriteProtected(0x1408FDC4B, size);
     
@@ -179,8 +216,8 @@ void DelayedPatches()
     MemcpyProtected(0x140CDC43F, 2, nopBytes);
 
     //Features -- Freecam (A + L3)
-    MemcpyProtected(0x14062C3AE, 5, pFreeCamBytes1);
-    MemcpyProtected(0x14062C401, 31, pFreeCamBytes2);
+    //MemcpyProtected(0x14062C3AE, 5, pFreeCamBytes1);
+    //MemcpyProtected(0x14062C401, 31, pFreeCamBytes2);
 
     //Disable Gesture Menu
     MemcpyProtected(0x140B2D583, 1, pGestureBytes);
@@ -206,12 +243,27 @@ void DelayedPatches()
     Hook((LPVOID)0x1408D475E, 5, &tCheckDebugDashSwitch, &bCheckDebugDashSwitch);
 
     //why am I calling this twice
-    Hook((LPVOID)0x14080905B, 7, &tLoadGameProperties, &bLoadGameProperties);
+    //Hook((LPVOID)0x14080905B, 7, &tLoadGameProperties, &bLoadGameProperties);
+
+    //Protecting saves from getting fucked in movemap
+    MemcpyProtected(0x140626DED, 5, checkProfileIdxPatch);
+    Hook((LPVOID)0x140626F4A, 8, &tMoveMapSaveFix, &bMoveMapSaveFix);
+
+    Hook((LPVOID)0x140D49F15, 7, &ClearRenderTargetViewGrey, &bClearRenderTargetViewGrey);
 
     //Sleep(4000);
 
     //Enable ChrDbgDraw
     //MemcpyProtected(0x1408D8049, 5, mov1ToAlBytes);
+}
+
+void AddExceptionHandler()
+{
+    //Sleep(20000);
+
+    SetUnhandledExceptionFilter(UHFilter);
+
+    //MessageBox(NULL, L"HAHAHA", L"HA", MB_ICONWARNING);
 }
 
 void EarlyPatches()
@@ -223,19 +275,209 @@ void EarlyPatches()
     WriteProtected(0x142720800, (long long)&initDebugBootMenuStepFunctions);
 }
 
+void AddCOPYPatch(uint64_t address, BYTE* bytes, int numBytes, BYTE lastByteCheck, int reapplyCount = 0)
+{
+    PatchJob pj;
+    pj.type = COPY;
+    pj.address = (BYTE*)address;
+    pj.bytes = bytes;
+    pj.numBytes = numBytes;
+    pj.lastByteCheck = lastByteCheck;
+    pj.reapplyCount = reapplyCount;
+
+    patchJobs.push_back(pj);
+}
+
+void AddHOOKPatch(uint64_t address, int numBytes, BYTE fifthByteCheck, void* pFunction, DWORD64* pReturn, int reapplyCount = 0)
+{
+    PatchJob pj;
+    pj.type = HOOK;
+    pj.address = (BYTE*)address;
+    pj.numBytes = numBytes;
+    pj.lastByteCheck = fifthByteCheck;
+    pj.pFunction = pFunction;
+    pj.pReturn = pReturn;
+    pj.reapplyCount = reapplyCount;
+
+    patchJobs.push_back(pj);
+}
+
+void AddPatches()
+{
+    AddCOPYPatch(0x14080A2F0, mov1ToAlBytes, 2, 0xC0, 1);
+    AddCOPYPatch(0x14080A2E0, mov1ToAlBytes, 2, 0xC0, 1);
+    AddCOPYPatch(0x140E82DEE, xorRaxBytes, 5, 1, 1);
+    //AddCOPYPatch(0x14062C3AE, pFreeCamBytes1, 5, 0, 1);
+    //AddCOPYPatch(0x14062C401, pFreeCamBytes2, 31, 0, 1); //doesnt work, but not causing crash
+    //AddCOPYPatch(0x1408D8049, mov1ToAlBytes, 5, 0xFF); //remove
+    AddCOPYPatch(0x1408B1CF1, dBypassCheck1, 4, 1, 1);
+    AddCOPYPatch(0x140EE7C01, dBypassCheck2, 4, 4);
+    AddCOPYPatch(0x140EC365F, systemPropertiesValue, 1, 1, 1);
+    AddHOOKPatch(0x14080905B, 7, 0xF5, &tLoadGameProperties, &bLoadGameProperties, 1);
+    AddHOOKPatch(0x1422ED2FC, 6, 0x8B, &decWindowCounter, &bDecWindowCounter);
+    AddHOOKPatch(0x1422F0522, 7, 0, &incWindowCounter, &bIncWindowCounter);
+    AddCOPYPatch(0x140250A5F, sfxGUIPatch1, 16, 0x60);
+    AddHOOKPatch(0x140ED1440, 5, 0, &tInitDebugBootMenuStep, &bInitDebugBootMenuStep);
+    AddCOPYPatch(0x1408E7E2C, moveMapListStepPatch, 18, 0x20);
+    AddHOOKPatch(0x1408FDC13, 7, 0x8D, &tGameStepSelection, &bGameStepSelection);
+    AddHOOKPatch(0x140D4E027, 7, 1, &tLoadDbgFont, &bLoadDbgFont);
+    AddCOPYPatch(0x140CDC43F, nopBytes, 2, 0x3E);
+    AddCOPYPatch(0x140B2D583, pGestureBytes, 1, 0x74);
+    AddCOPYPatch(0x144587EC8, (BYTE*)&DbgDispLoadingAddress, 8, 0);
+    AddCOPYPatch(0x140022909, nopBytes, 2, 0x7F);
+    AddCOPYPatch(0x142346F45, dbgFontPatch, 2, 0x10);
+    AddHOOKPatch(0x1408E7897, 5, 0, &patchMoveMapFinishAntiTamper, &whatever);
+    AddCOPYPatch(0x140B33BCD, jmpBytes, 2, 0x71);
+    AddHOOKPatch(0x1408D475E, 5, 8, &tCheckDebugDashSwitch, &bCheckDebugDashSwitch);
+    //AddCOPYPatch(0x140626DED, checkProfileIdxPatch, 5, 0x0A); //remove
+    AddHOOKPatch(0x140626F4A, 8, 0x0A, &tMoveMapSaveFix, &bMoveMapSaveFix);
+    AddHOOKPatch(0x140950074, 11, 0, DisableSave, &bDisableSave);
+    AddHOOKPatch(0x140901117, 5, 0x48, EnableSave, &bEnableSave);
+    AddHOOKPatch(0x140626DE6, 7, 0x0A, CheckSaveDisabled, &bCheckSaveDisabled);
+    AddHOOKPatch(0x140D49F15, 7, 0xE5, &ClearRenderTargetViewGrey, &bClearRenderTargetViewGrey);
+    AddCOPYPatch(0x140ECDCE4, mov1ToAlBytes, 5, 0xFF);
+    AddCOPYPatch(0x142720800, (BYTE*)&pinitDebugBootMenuStepFunctions, 8, 0);
+    
+    //AddCOPYPatch(0x145E42FA8, nopBytes, 2, 0);
+    //AddCOPYPatch(0x145D64410, nopBytes, 3, 1);
+    //AddCOPYPatch(0x1458BFE5E, nopBytes, 3, 0);
+}
+
+//this is ONLY for patches that aren't critical on boot, but need to be delayed for reasons
+void DelayedPatchesNew()
+{
+    Sleep(5000);
+
+    MemcpyProtected(0x14062C3AE, 5, pFreeCamBytes1);
+    MemcpyProtected(0x14062C401, 31, pFreeCamBytes2);
+}
+
+PatchJob GrabPatchJob()
+{
+    PatchJob pjReturn;
+    pjReturn.type = INVALID;
+
+    //pjMutex.lock();
+    WaitForSingleObject(pjMutex, INFINITE);
+
+    if (!patchJobs.empty())
+    {
+        pjReturn = patchJobs.back();
+        patchJobs.pop_back();
+    }
+
+    //pjMutex.unlock();
+    ReleaseMutex(pjMutex);
+
+    return pjReturn;
+}
+
+void lalalala()
+{
+
+}
+
+void PatchThread(LPVOID pId)
+{
+    int id = *static_cast<int*>(pId);
+    
+    vector<PatchJob> threadPatchJobs;
+    vector<PatchJob>::iterator it;
+    bool grabPatchJob = true;
+    bool jobDone = true;
+
+    while (true)
+    {
+        jobDone = true;
+
+        if (grabPatchJob)
+        {
+            PatchJob pj = GrabPatchJob();
+
+            if (pj.type != INVALID)
+            {
+                threadPatchJobs.push_back(pj);
+            }
+            else 
+            {
+                grabPatchJob = false;
+                threadStartupMarkers[id] = true;
+            }
+                
+        }
+
+        for (it = threadPatchJobs.begin(); it != threadPatchJobs.end(); it++) {
+           
+            if (it->type == COPY)
+            {
+                jobDone = false;
+
+                if (*(it->address + it->numBytes - 1) == it->lastByteCheck)
+                {
+                    //memcpy(it->address, it->bytes, it->numBytes);
+                    MemcpyProtected((uint64_t)it->address, it->numBytes, it->bytes);
+
+                    if (it->reapplyCount == 0)
+                        it->type = INVALID;
+                    else
+                        it->reapplyCount--;
+                }
+            }
+            else if (it->type == HOOK)
+            {
+                jobDone = false;
+
+                if (*(it->address + 4) == it->lastByteCheck)
+                {
+                    //threadShitMarkers[id]++;
+                    MH_DisableHook(it->address);
+                    Hook(it->address, it->numBytes, it->pFunction, it->pReturn);
+
+                    if (it->reapplyCount == 0)
+                        it->type = INVALID;
+                    else
+                    {
+                        
+                        it->reapplyCount--;
+                    }
+                        
+                }
+            }
+        }
+
+        if (!grabPatchJob && jobDone)
+            break;
+    }
+
+    threadFinishMarkers[id] = true;
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
 {
-    HANDLE thread;
+    HANDLE thread2;
     static HMODULE dinput8dll = nullptr;
     HMODULE chainModule = NULL;
     wchar_t chainPath[MAX_PATH];
     wchar_t dllPath[MAX_PATH];
 
-    EarlyPatches();
+    //wchar_t buff[100];
+    //swprintf_s(buff, L"bytes is:%d", patchJobs[0][0].numBytes);
 
+    //MessageBox(NULL, (LPCWSTR)buff, L"Msg title", MB_OK | MB_ICONQUESTION);
+    //EarlyPatches();
+    
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:
+    {
+        
+        for (int i = 0; i < NUM_PATCH_THREADS; i++)
+        {
+            threadIndices[i] = i;
+            //patchJobs.push_back(vector<PatchJob>());
+        }
+
+        AddPatches();
 
         GetPrivateProfileStringW(L"misc", L"dinput8DllWrapper", L"", chainPath, MAX_PATH, L".\\debugmenu.ini");
 
@@ -265,24 +507,53 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
             }
         }
 
+
         SetUpVtables();
 
         //Sleep(10000);
 
         MH_Initialize();
+        //CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)AddExceptionHandler, hModule, NULL, NULL);
+        for (int i = 0; i < NUM_PATCH_THREADS; i++)
+        {
+            //patchingThreads[i] = thread(lalalala);
+            patchingThreads[i] = CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)PatchThread, (LPVOID)&threadIndices[i], NULL, NULL);
+        }
+
+        bool threadsStarted = false;
+        int checkedThreadIdx = 0;
+
+        while (true)
+        {
+            if (threadStartupMarkers[checkedThreadIdx])
+            {
+                checkedThreadIdx++;
+            }
+
+            if (checkedThreadIdx == NUM_PATCH_THREADS)
+                break;
+        }
+
+        CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)AddExceptionHandler, NULL, NULL, NULL);
         //EarlyPatches();
         //PatchFunctionTable();
         //PatchEsdDbgLogOutput();
         //PatchEzStateActionEnvJumpTable();
-        thread = CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)DelayedPatches, hModule, NULL, NULL);
-        CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)ExtraDelayedPatches, hModule, NULL, NULL);
+
+        
+        CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)DelayedPatchesNew, hModule, NULL, NULL);
+        //CreateThread(NULL, NULL, (LPTHREAD_START_ROUTINE)ExtraDelayedPatches, hModule, NULL, NULL);
+
+
 
         break;
+    }
     case DLL_THREAD_ATTACH:
         break;
     case DLL_THREAD_DETACH:
         break;
     case DLL_PROCESS_DETACH:
+        
         if (chainModule)
         {
             FreeLibrary(chainModule);
@@ -293,6 +564,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
+
+        for (int i = 0; i < NUM_PATCH_THREADS; i++)
+        {
+            CloseHandle(patchingThreads[i]);
+        }
 
         delete[] debugBootMenuStepVtable;
         delete[] EzTextlistSelectorVtable;

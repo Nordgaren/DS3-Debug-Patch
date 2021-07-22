@@ -1,4 +1,5 @@
 EXTERN bLoadGameProperties:QWORD
+EXTERN IsTitleModeString:QWORD
 
 .data
 	createContainer QWORD 14001B520h
@@ -107,6 +108,87 @@ loc_1409E3953:
 	pop rbp
 	ret
 sub_1409E3890 ENDP
+
+.data
+	gameIsTitleModeValueRead DWORD 0
+	pHeapAlloc QWORD 144914558h
+	putStringInContainer QWORD 140003C40h
+	parseGamePropertiesValue QWORD 14178CDF0h
+	gameIsTitleMode BYTE 0
+.code
+
+getGamePropertiesValueGameIsTitleMode PROC
+	push rdi
+	sub rsp, 70h
+	mov qword ptr [rsp+28h], 0FFFFFFFFFFFFFFFEh
+	mov [rsp+80h], rbx
+	mov eax, [gameIsTitleModeValueRead]
+	test al, 1
+	jne getValue
+	mov rbx, pHeapAlloc
+	mov rbx, [rbx]
+	test rbx, rbx
+	jne allocok
+	mov rax, 14177AD20h
+	call rax
+	mov rbx, pHeapAlloc
+	mov rbx, [rbx]
+	mov [rbx], rax
+	mov rbx, rax
+allocok:
+	mov rax, [rbx]
+	xor r8d, r8d
+	lea rdx, [rsp+20h]
+	mov rcx, rbx
+	call qword ptr [rax+18h]
+	mov ecx, [rax]
+	shr ecx, 5
+	test cl, 1
+	jne containerok
+	mov r8, 1439E1800h
+	mov edx, 3Eh
+	xor ecx, ecx
+	mov rax, 141769E10h
+	call rax
+containerok:
+	xor edi, edi
+	mov [rsp+40h], rdi
+	mov [rsp+48h], rdi
+	mov [rsp+50h], rbx
+	mov qword ptr [rsp+48h], 7
+	mov [rsp+40h], rdi
+	mov word ptr [rsp+30h], di
+	lea r8d, [rdi+10h]
+	lea rdx, [IsTitleModeString]
+	lea rcx, [rsp+30h]
+	call putStringInContainer
+	mov byte ptr [rsp+58h], 1
+	xor r8d, r8d
+	lea rdx, [rsp+30h]
+	mov rcx, [_theGameProperties]
+	mov rcx, [rcx]
+	call parseGamePropertiesValue
+	mov [gameIsTitleMode], al
+	cmp qword ptr [rsp+48h], 8
+	jb stringshort
+	mov rcx, [rsp+50h]
+	mov r8, [rcx]
+	mov rdx, [rsp+30h]
+	call qword ptr [r8+68h]
+	movzx eax, [gameIsTitleMode]
+stringshort:
+	mov qword ptr [rsp+48h], 7
+	mov [rsp+40h], rdi
+	mov word ptr [rsp+30h], di
+	jmp epilogue
+getValue:
+	movzx eax, [gameIsTitleMode]
+epilogue:
+	mov rbx, [rsp+80h]
+	add rsp, 70h
+	pop rdi
+	ret
+getGamePropertiesValueGameIsTitleMode ENDP
 
 
 END
